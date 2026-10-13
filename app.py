@@ -8,13 +8,13 @@ app = Flask(__name__)
 CORS(app)
 
 # Serve the frontend interface from the root directory
+# Serve the frontend interface from the root directory
 @app.route('/')
 def home():
     try:
         return send_from_directory('.', 'index.html')
     except Exception as e:
-        return f"KRYPTOS_ERROR: index.html not found ({str(e)}), 404
-
+        return f"KRYPTOS_ERROR: index.html not found ({str(e)})", 404
 def calculate_wma(data, period):
     if len(data) < period: return 0
     weights = list(range(1, period + 1))
