@@ -8,14 +8,13 @@ app = Flask(__name__)
 CORS(app)
 
 # Serve the frontend interface from the root directory
-# Serve the frontend interface from the root directory
-# Serve the frontend interface from the root directory
 @app.route('/')
 def home():
     try:
         return send_from_directory('.', 'index.html')
     except Exception:
         return "KRYPTOS_ERROR: index.html not found", 404
+
 def calculate_wma(data, period):
     if len(data) < period: return 0
     weights = list(range(1, period + 1))
@@ -58,9 +57,16 @@ def get_btc_price():
         offset = len(raw_points) - len(hma_values)
         candles = [{"t": d['time'], "o": d['open'], "h": d['high'], "l": d['low'], "c": d['close']} for d in raw_points[offset:]]
         
+        # Align HMA line precisely over price candles using null padding
+        padded_hma = [None] * offset + hma_values
+
         return jsonify({
-            "symbol": symbol, "currency": curr, "hma_period": p,
-            "candles": candles, "hma": hma_values, "hma_offset": offset, "current": closes[-1]
+            "symbol": symbol,
+            "currency": curr,
+            "hma_period": p,
+            "candles": candles,
+            "hma": padded_hma,
+            "current": closes[-1]
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -71,7 +77,7 @@ def ai_chat():
         data = request.json or {}
         groq_api_key = os.environ.get("GROQ_API_KEY")
         if not groq_api_key:
-            return jsonify({"reply": "AI_OFFLINE: Missing GROQ_API_KEY environment variable."})
+            return jsonify({"reply": "AI_OFFLINE: GROQ_API_KEY missing in Render env vars."})
             
         payload = {
             "model": "llama-3.1-8b-instant", 
@@ -81,8 +87,14 @@ def ai_chat():
             ]
         }
         headers = {"Authorization": f"Bearer {groq_api_key}", "Content-Type": "application/json"}
-        res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=30)
-        return jsonify({"reply": res.json()['choices'][0]['message']['content']})
+        res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=10)
+        res_data = res.json()
+        
+        if 'choices' not in res_data:
+            err_msg = res_data.get('error', {}).get('message', 'Unknown Groq API Error')
+            return jsonify({"reply": f"AI_OFFLINE: {err_msg}"})
+
+        return jsonify({"reply": res_data['choices'][0]['message']['content']})
     except Exception as e:
         return jsonify({"reply": f"AI_OFFLINE: {str(e)}"})
 
