@@ -8,8 +8,19 @@
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100;300;400;900&family=Syncopate:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root { --bg:#070708; --amber:#ff9d00; --rose:#ff2d55; --nordic:#f0f0f5; }
-  html,body { height:100%; }
-  body { background:var(--bg); color:var(--nordic); font-family:'Outfit',sans-serif; overflow:hidden; }
+  html,body { min-height:100%; }
+  body { background:var(--bg); color:var(--nordic); font-family:'Outfit',sans-serif; overflow:auto; }
+  @media (max-width: 900px) {
+    body { height:auto; min-height:100vh; padding:1rem; }
+    body > .flex-1.grid { display:flex; flex-direction:column; }
+    main, aside { width:100%; }
+    header { flex-wrap:wrap; gap:1rem; }
+    header > div:last-child { flex-wrap:wrap; gap:1rem; }
+    #sym { font-size:3rem; width:7rem; }
+    #price-hero { font-size:2.5rem; }
+    #canvas { min-height:280px; }
+    aside { overflow:visible; }
+  }
   .avant-garde { font-family:'Syncopate',sans-serif; text-transform:uppercase; letter-spacing:.45em; }
   .panel { background:rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.05); }
   .glow-amber { filter:drop-shadow(0 0 15px rgba(255,157,0,.3)); }
@@ -82,7 +93,7 @@
         <div id="hover-price" class="text-xl font-thin text-[#ff2d55]"></div>
       </div>
       <div class="text-right">
-        <div id="price-hero" class="text-7xl font-thin tracking-tighter">0.00</div>
+        <div id="price-hero" class="text-7xl font-thin tracking-tighter">—</div>
         <div id="price-sub" class="text-[9px] avant-garde opacity-25 mt-1">&nbsp;</div>
       </div>
     </div>
@@ -92,7 +103,7 @@
       <button onclick="goLive()" class="underline">RETURN_TO_LIVE</button>
     </div>
 
-    <div class="flex-1 relative panel rounded-sm min-h-0">
+    <div class="flex-1 relative panel rounded-sm min-h-0" style="min-height:280px">
       <svg id="canvas" viewBox="0 0 1000 400" preserveAspectRatio="none"
            class="w-full h-full overflow-visible cursor-crosshair"
            onmousemove="handleHover(event)" onmouseleave="hideHover()">
@@ -156,6 +167,7 @@ let mode = 'candle';
 let minP = 0, rangeP = 1;
 let liveMode = true;     // false while a saved snapshot is on screen
 let refreshTimer = null;
+let requestInFlight = false;
 
 const $ = id => document.getElementById(id);
 
@@ -202,11 +214,12 @@ function fmt(value, currency) {
    MARKET DATA
    ---------------------------------------------------------------------- */
 async function fetchData() {
-  if (!liveMode) return;
+  if (!liveMode || requestInFlight) return;
   const symbol = $('sym').value.trim().toUpperCase();
   if (!symbol) { toast('Enter a ticker, for example BTC.'); return; }
 
   setStatus('SYNCING…');
+  requestInFlight = true;
   try {
     const data = await api('/api/price', {
       method: 'POST',
@@ -222,7 +235,7 @@ async function fetchData() {
     hma = data.hma;
     hmaOffset = data.hma_offset;
     $('sym').value = data.symbol;
-    $('price-hero').textContent = fmt(data.current);
+    $('price-hero').textContent = fmt(data.current, data.currency);
     $('price-sub').textContent = data.currency + ' · HMA_' + data.hma_period;
     setStatus('NODE_VERIFIED');
     render();
@@ -230,6 +243,8 @@ async function fetchData() {
     // The chart keeps showing the last good data rather than going blank.
     setStatus('SYNC_FAILED');
     toast(error.message);
+  } finally {
+    requestInFlight = false;
   }
 }
 
@@ -303,7 +318,7 @@ function handleHover(event) {
   document.querySelectorAll('.crosshair').forEach(el => el.style.opacity = '.5');
 
   const time = new Date(candle.t * 1000).toLocaleString();
-  $('hover-price').textContent = `${fmt(candle.c)} · ${time}`;
+  $('hover-price').textContent = `${fmt(candle.c, $('currency').value)} · ${time}`;
 }
 
 function hideHover() {
@@ -426,7 +441,9 @@ async function openSnapshot(id) {
     clearInterval(refreshTimer);
     $('banner').classList.remove('hidden');
     $('banner-text').textContent = 'VIEWING SNAPSHOT — ' + snapshot.label.toUpperCase();
-    $('price-hero').textContent = fmt(candles[candles.length - 1].c);
+    if (!candles.length) throw new Error('This snapshot contains no chart data.');
+    $('sym').value = snapshot.symbol || $('sym').value;
+    $('price-hero').textContent = fmt(candles[candles.length - 1].c, snapshot.currency);
     $('price-sub').textContent = snapshot.currency + ' · HMA_' + snapshot.hma_period;
     setStatus('ARCHIVE_MODE');
     render();
@@ -492,7 +509,7 @@ async function ask() {
   $(id).addEventListener('change', () => { liveMode = true; $('banner').classList.add('hidden'); fetchData().then(loadWatchlist); })
 );
 $('hma-toggle').addEventListener('change', render);
-$('chat-in').addEventListener('keypress', e => { if (e.key === 'Enter') ask(); });
+$('chat-in').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); ask(); } });
 window.addEventListener('resize', render);
 
 setInterval(() => { $('clock').textContent = new Date().toLocaleTimeString(); }, 1000);
