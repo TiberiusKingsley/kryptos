@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KRYPTOS</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@100;300;400;900&family=Syncopate:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#070708; --amber:#ff9d00; --rose:#ff2d55; --nordic:#f0f0f5; }
+  html,body { height:100%; }
+  body { background:var(--bg); color:var(--nordic); font-family:'Outfit',sans-serif; overflow:hidden; }
+  .avant-garde { font-family:'Syncopate',sans-serif; text-transform:uppercase; letter-spacing:.45em; }
+  .panel { background:rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.05); }
+  .glow-amber { filter:drop-shadow(0 0 15px rgba(255,157,0,.3)); }
+
+  .hma-line { stroke:var(--rose); stroke-width:1.5; fill:none; stroke-dasharray:4; pointer-events:none; }
+  .candle-up { fill:var(--amber); }
+  .candle-down { fill:transparent; stroke:var(--rose); stroke-width:1.5; }
+  .crosshair { stroke:#fff; stroke-width:.5; stroke-dasharray:4; opacity:0; pointer-events:none; transition:opacity .2s; }
+  .axis-text { font-size:8px; fill:#fff; opacity:.25; font-family:'Syncopate'; pointer-events:none; }
+
+  .switch { position:relative; display:inline-block; width:34px; height:18px; }
+  .switch input { opacity:0; width:0; height:0; }
+  .slider { position:absolute; cursor:pointer; inset:0; background:#222; border-radius:20px; transition:.3s; }
+  .slider:before { content:""; position:absolute; height:12px; width:12px; left:3px; bottom:3px; background:#fff; border-radius:50%; transition:.3s; }
+  input:checked + .slider { background:var(--rose); }
+  input:checked + .slider:before { transform:translateX(16px); }
+
+  select, input { background:transparent; outline:none; border:none; color:inherit; }
+  select option { background:#111; color:#eee; }
+  button:disabled { opacity:.25; cursor:not-allowed; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:.5rem; }
+  .chip { border:1px solid rgba(255,255,255,.08); }
+  .chip.active { border-color:var(--amber); color:var(--amber); }
+  aside::-webkit-scrollbar, .scroll::-webkit-scrollbar { width:2px; }
+  aside::-webkit-scrollbar-thumb, .scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,.12); }
+
+  #toast { transform:translateY(-140%); transition:transform .35s ease; }
+  #toast.show { transform:translateY(0); }
+  .spin { animation:spin 1s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body class="h-screen w-screen flex flex-col p-8 gap-5">
+
+<!-- error / info toast -------------------------------------------------- -->
+<div id="toast" class="fixed top-0 left-1/2 -translate-x-1/2 z-50 mt-4 px-6 py-3 rounded-sm panel backdrop-blur text-[11px] font-light max-w-lg text-center"></div>
+
+<header class="row shrink-0">
+  <div class="flex items-center gap-7">
+    <h1 class="avant-garde text-3xl font-bold glow-amber">KRYPTOS</h1>
+    <div id="status" class="text-[9px] avant-garde text-white/25">INITIALISING</div>
+  </div>
+  <div class="flex gap-8 items-center">
+    <label class="text-[9px] avant-garde opacity-30">HMA
+      <input id="period" type="number" min="2" max="200" value="16"
+             class="w-12 ml-2 text-center border-b border-white/10 opacity-100">
+    </label>
+    <select id="currency" class="text-[9px] avant-garde opacity-40 hover:opacity-100 cursor-pointer">
+      <option value="USD">USD</option><option value="EUR">EUR</option>
+      <option value="GBP">GBP</option><option value="CHF">CHF</option>
+    </select>
+    <select id="interval" class="text-[9px] avant-garde opacity-40 hover:opacity-100 cursor-pointer">
+      <option value="48">24H_VIEW</option>
+      <option value="96">48H_VIEW</option>
+      <option value="168">07D_VIEW</option>
+      <option value="336">14D_VIEW</option>
+    </select>
+    <div id="clock" class="text-[9px] avant-garde opacity-20">00:00:00</div>
+  </div>
+</header>
+
+<div class="flex-1 grid grid-cols-12 gap-8 min-h-0">
+
+  <!-- CHART -------------------------------------------------------------- -->
+  <main class="col-span-8 flex flex-col min-h-0">
+    <div class="row items-end mb-6">
+      <div class="flex items-baseline gap-5">
+        <input id="sym" value="BTC" maxlength="10" spellcheck="false"
+               class="text-7xl font-black uppercase w-52 border-b border-white/5 focus:border-[#ff9d00] transition-colors">
+        <div id="hover-price" class="text-xl font-thin text-[#ff2d55]"></div>
+      </div>
+      <div class="text-right">
+        <div id="price-hero" class="text-7xl font-thin tracking-tighter">0.00</div>
+        <div id="price-sub" class="text-[9px] avant-garde opacity-25 mt-1">&nbsp;</div>
+      </div>
+    </div>
+
+    <div id="banner" class="hidden mb-3 px-4 py-2 text-[9px] avant-garde text-[#ff2d55] border border-[#ff2d55]/30 row">
+      <span id="banner-text">VIEWING SNAPSHOT</span>
+      <button onclick="goLive()" class="underline">RETURN_TO_LIVE</button>
+    </div>
+
+    <div class="flex-1 relative panel rounded-sm min-h-0">
+      <svg id="canvas" viewBox="0 0 1000 400" preserveAspectRatio="none"
+           class="w-full h-full overflow-visible cursor-crosshair"
+           onmousemove="handleHover(event)" onmouseleave="hideHover()">
+        <g id="grid-lines"></g>
+        <g id="plot-area"></g>
+        <line id="ch-v" class="crosshair" x1="0" y1="0" x2="0" y2="400"></line>
+        <line id="ch-h" class="crosshair" x1="0" y1="0" x2="1000" y2="0"></line>
+      </svg>
+      <div id="chart-empty" class="absolute inset-0 grid place-items-center text-[9px] avant-garde opacity-20">NO_DATA</div>
+    </div>
+
+    <div class="row mt-5 border-t border-white/5 pt-4 shrink-0">
+      <div class="flex gap-6">
+        <button id="btn-line" onclick="setMode('line')" class="text-[9px] avant-garde opacity-30 hover:opacity-100 transition-all">Vector</button>
+        <button id="btn-candle" onclick="setMode('candle')" class="text-[9px] avant-garde opacity-100 transition-all">OHLC</button>
+      </div>
+      <div class="flex gap-6 items-center">
+        <label class="switch"><input type="checkbox" id="hma-toggle" checked><span class="slider"></span></label>
+        <span class="text-[9px] avant-garde opacity-30">HMA_Overlay</span>
+        <button onclick="exportJSON()" class="text-[9px] avant-garde opacity-30 hover:opacity-100">Export_JSON</button>
+        <button onclick="saveSnapshot()" class="text-[9px] avant-garde border border-white/10 px-4 py-2 hover:bg-white hover:text-black transition-all">Save_Snapshot</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- SIDEBAR ------------------------------------------------------------ -->
+  <aside class="col-span-4 flex flex-col gap-5 min-h-0 overflow-y-auto pr-1">
+
+    <section class="panel rounded-2xl p-6 shrink-0">
+      <div class="row mb-4">
+        <div class="text-[9px] avant-garde opacity-25">Watchlist</div>
+        <button onclick="addWatch()" class="text-[9px] avant-garde opacity-40 hover:opacity-100">+ Add_Current</button>
+      </div>
+      <div id="watchlist" class="flex flex-wrap gap-2"></div>
+    </section>
+
+    <section class="panel rounded-2xl p-6 shrink-0">
+      <div class="text-[9px] avant-garde opacity-25 mb-4">Snapshots</div>
+      <div id="snapshots" class="space-y-2 max-h-52 overflow-y-auto scroll text-xs font-light"></div>
+    </section>
+
+    <section class="panel rounded-2xl p-6 flex flex-col flex-1 min-h-[230px]">
+      <div class="text-[9px] avant-garde opacity-25 mb-5" id="ai-label">Llama_3.1_Core</div>
+      <div id="chat" class="flex-1 overflow-y-auto scroll space-y-4 text-sm font-light"></div>
+      <input id="chat-in" placeholder="Query node…" maxlength="400"
+             class="mt-5 pt-4 border-t border-white/5 text-xs placeholder:opacity-30">
+    </section>
+  </aside>
+</div>
+
+<script>
+"use strict";
+
+/* ----------------------------------------------------------------------
+   STATE
+   ---------------------------------------------------------------------- */
+let candles = [];        // [{t,o,h,l,c}]
+let hma = [];            // HMA values
+let hmaOffset = 0;       // hma[i] belongs to candles[hmaOffset + i]
+let mode = 'candle';
+let minP = 0, rangeP = 1;
+let liveMode = true;     // false while a saved snapshot is on screen
+let refreshTimer = null;
+
+const $ = id => document.getElementById(id);
+
+/* ----------------------------------------------------------------------
+   HELPERS
+   ---------------------------------------------------------------------- */
+let toastTimer = null;
+function toast(message, isError = true) {
+  const el = $('toast');
+  el.textContent = message;
+  el.style.color = isError ? '#ff2d55' : '#f0f0f5';
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 4200);
+}
+
+function setStatus(text) { $('status').textContent = text; }
+
+/**
+ * One place where every request to the backend goes through, so that error
+ * handling, JSON parsing and the status line behave identically everywhere.
+ * Any {error: "..."} the server sends is turned into a thrown Error carrying
+ * a message that is safe to show the user.
+ */
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options
+  });
+  let body = {};
+  try { body = await response.json(); } catch (e) { /* empty body */ }
+  if (!response.ok) throw new Error(body.error || `Request failed (${response.status}).`);
+  return body;
+}
+
+function fmt(value, currency) {
+  return Number(value).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: value < 1 ? 6 : 2
+  }) + (currency ? ' ' + currency : '');
+}
+
+/* ----------------------------------------------------------------------
+   MARKET DATA
+   ---------------------------------------------------------------------- */
+async function fetchData() {
+  if (!liveMode) return;
+  const symbol = $('sym').value.trim().toUpperCase();
+  if (!symbol) { toast('Enter a ticker, for example BTC.'); return; }
+
+  setStatus('SYNCING…');
+  try {
+    const data = await api('/api/price', {
+      method: 'POST',
+      body: JSON.stringify({
+        symbol,
+        currency: $('currency').value,
+        limit: parseInt($('interval').value, 10),
+        hma_period: parseInt($('period').value, 10)
+      })
+    });
+
+    candles = data.candles;
+    hma = data.hma;
+    hmaOffset = data.hma_offset;
+    $('sym').value = data.symbol;
+    $('price-hero').textContent = fmt(data.current);
+    $('price-sub').textContent = data.currency + ' · HMA_' + data.hma_period;
+    setStatus('NODE_VERIFIED');
+    render();
+  } catch (error) {
+    // The chart keeps showing the last good data rather than going blank.
+    setStatus('SYNC_FAILED');
+    toast(error.message);
+  }
+}
+
+/* ----------------------------------------------------------------------
+   RENDERING
+   ---------------------------------------------------------------------- */
+function render() {
+  const plot = $('plot-area'), grid = $('grid-lines');
+  plot.innerHTML = ''; grid.innerHTML = '';
+  $('chart-empty').classList.toggle('hidden', candles.length > 0);
+  if (!candles.length) return;
+
+  const prices = candles.flatMap(d => [d.h, d.l]);
+  const showHMA = $('hma-toggle').checked && hma.length > 0;
+  const all = showHMA ? prices.concat(hma) : prices;
+  minP = Math.min(...all);
+  const maxP = Math.max(...all);
+  rangeP = (maxP - minP) || 1;               // never divide by zero
+
+  const x = i => candles.length === 1 ? 500 : (i / (candles.length - 1)) * 1000;
+  const y = p => 400 - ((p - minP) / rangeP) * 400;
+
+  for (let i = 0; i <= 4; i++) {
+    const gy = 400 - i * 100;
+    const value = minP + rangeP * (i / 4);
+    grid.innerHTML += `<line x1="0" y1="${gy}" x2="1000" y2="${gy}" stroke="white" stroke-opacity="0.05"/>`;
+    grid.innerHTML += `<text x="1005" y="${gy + 3}" class="axis-text">${value.toFixed(2)}</text>`;
+  }
+
+  if (showHMA) {
+    const path = hma
+      .map((v, i) => `${i === 0 ? 'M' : 'L'} ${x(i + hmaOffset)} ${y(v)}`)
+      .join(' ');
+    plot.innerHTML += `<path d="${path}" class="hma-line"/>`;
+  }
+
+  if (mode === 'line') {
+    const path = candles.map((p, i) => `${i === 0 ? 'M' : 'L'} ${x(i)} ${y(p.c)}`).join(' ');
+    plot.innerHTML += `<path d="${path}" stroke="var(--amber)" fill="none" stroke-width="2" class="glow-amber"/>`;
+  } else {
+    const width = Math.max((1000 / candles.length) * 0.55, 0.6);
+    let markup = '';
+    candles.forEach((p, i) => {
+      const cx = x(i);
+      const oY = y(p.o), cY = y(p.c);
+      markup += `<line x1="${cx}" y1="${y(p.h)}" x2="${cx}" y2="${y(p.l)}" stroke="white" stroke-opacity="0.15"/>`;
+      markup += `<rect x="${cx - width / 2}" y="${Math.min(oY, cY)}" width="${width}" ` +
+                `height="${Math.max(Math.abs(oY - cY), 1)}" class="${p.c >= p.o ? 'candle-up' : 'candle-down'}"/>`;
+    });
+    plot.innerHTML += markup;   // built as one string, then inserted once
+  }
+}
+
+function handleHover(event) {
+  if (!candles.length) return;
+  const svg = $('canvas');
+  const point = svg.createSVGPoint();
+  point.x = event.clientX; point.y = event.clientY;
+  const local = point.matrixTransform(svg.getScreenCTM().inverse());
+  const clamped = Math.min(1000, Math.max(0, local.x));
+
+  const index = Math.min(candles.length - 1,
+    Math.max(0, Math.round((clamped / 1000) * (candles.length - 1))));
+  const candle = candles[index];
+  if (!candle) return;
+
+  const exactX = candles.length === 1 ? 500 : (index / (candles.length - 1)) * 1000;
+  const exactY = 400 - ((candle.c - minP) / rangeP) * 400;
+  $('ch-v').setAttribute('x1', exactX); $('ch-v').setAttribute('x2', exactX);
+  $('ch-h').setAttribute('y1', exactY); $('ch-h').setAttribute('y2', exactY);
+  document.querySelectorAll('.crosshair').forEach(el => el.style.opacity = '.5');
+
+  const time = new Date(candle.t * 1000).toLocaleString();
+  $('hover-price').textContent = `${fmt(candle.c)} · ${time}`;
+}
+
+function hideHover() {
+  document.querySelectorAll('.crosshair').forEach(el => el.style.opacity = '0');
+  $('hover-price').textContent = '';
+}
+
+function setMode(next) {
+  mode = next;
+  $('btn-line').style.opacity = next === 'line' ? 1 : .3;
+  $('btn-candle').style.opacity = next === 'candle' ? 1 : .3;
+  render();
+}
+
+/* ----------------------------------------------------------------------
+   WATCHLIST
+   ---------------------------------------------------------------------- */
+async function loadWatchlist() {
+  try { drawWatchlist((await api('/api/watchlist')).watchlist); }
+  catch (error) { toast(error.message); }
+}
+
+function drawWatchlist(items) {
+  const box = $('watchlist');
+  if (!items.length) {
+    box.innerHTML = '<div class="text-[9px] avant-garde opacity-20">EMPTY</div>';
+    return;
+  }
+  const current = $('sym').value.trim().toUpperCase();
+  box.innerHTML = items.map(item => `
+    <div class="chip ${item.symbol === current ? 'active' : ''} rounded-full pl-4 pr-2 py-1 flex items-center gap-2">
+      <button onclick="selectSymbol('${item.symbol}')" class="text-[10px] avant-garde">${item.symbol}</button>
+      <button onclick="removeWatch('${item.symbol}')" class="opacity-25 hover:opacity-100 text-xs leading-none">&times;</button>
+    </div>`).join('');
+}
+
+async function addWatch() {
+  const symbol = $('sym').value.trim().toUpperCase();
+  if (!symbol) { toast('Enter a ticker first.'); return; }
+  try {
+    drawWatchlist((await api('/api/watchlist', {
+      method: 'POST', body: JSON.stringify({ symbol })
+    })).watchlist);
+    toast(symbol + ' added to the watchlist.', false);
+  } catch (error) { toast(error.message); }
+}
+
+async function removeWatch(symbol) {
+  try {
+    drawWatchlist((await api('/api/watchlist/' + encodeURIComponent(symbol),
+      { method: 'DELETE' })).watchlist);
+  } catch (error) { toast(error.message); }
+}
+
+function selectSymbol(symbol) {
+  $('sym').value = symbol;
+  goLive();
+}
+
+/* ----------------------------------------------------------------------
+   SNAPSHOTS
+   ---------------------------------------------------------------------- */
+async function loadSnapshots() {
+  try { drawSnapshots((await api('/api/snapshots')).snapshots); }
+  catch (error) { toast(error.message); }
+}
+
+function drawSnapshots(items) {
+  const box = $('snapshots');
+  if (!items.length) {
+    box.innerHTML = '<div class="text-[9px] avant-garde opacity-20">NONE_SAVED</div>';
+    return;
+  }
+  box.innerHTML = items.map(item => `
+    <div class="row group">
+      <button onclick="openSnapshot(${item.id})" class="text-left flex-1 hover:text-[#ff9d00] transition-colors truncate">
+        ${escapeHTML(item.label)}
+        <span class="opacity-25 text-[10px]"> · ${item.symbol}</span>
+      </button>
+      <button onclick="deleteSnapshot(${item.id})" class="opacity-20 hover:opacity-100 text-xs px-2">&times;</button>
+    </div>`).join('');
+}
+
+/** Captions are user input, so they are escaped before entering the DOM. */
+function escapeHTML(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+async function saveSnapshot() {
+  if (!candles.length) { toast('There is no chart data to save yet.'); return; }
+  const label = (prompt('Name this snapshot:', $('sym').value + ' ' +
+                new Date().toLocaleString()) || '').trim();
+  if (label === '') return;                 // cancelled
+  try {
+    const result = await api('/api/snapshots', {
+      method: 'POST',
+      body: JSON.stringify({
+        label,
+        symbol: $('sym').value.trim().toUpperCase(),
+        currency: $('currency').value,
+        hma_period: parseInt($('period').value, 10),
+        candles, hma, hma_offset: hmaOffset
+      })
+    });
+    drawSnapshots(result.snapshots);
+    toast('Snapshot saved.', false);
+  } catch (error) { toast(error.message); }
+}
+
+async function openSnapshot(id) {
+  try {
+    const snapshot = (await api('/api/snapshots/' + id)).snapshot;
+    candles = snapshot.payload.candles;
+    hma = snapshot.payload.hma || [];
+    hmaOffset = snapshot.payload.hma_offset || 0;
+
+    liveMode = false;
+    clearInterval(refreshTimer);
+    $('banner').classList.remove('hidden');
+    $('banner-text').textContent = 'VIEWING SNAPSHOT — ' + snapshot.label.toUpperCase();
+    $('price-hero').textContent = fmt(candles[candles.length - 1].c);
+    $('price-sub').textContent = snapshot.currency + ' · HMA_' + snapshot.hma_period;
+    setStatus('ARCHIVE_MODE');
+    render();
+  } catch (error) { toast(error.message); }
+}
+
+async function deleteSnapshot(id) {
+  try {
+    drawSnapshots((await api('/api/snapshots/' + id, { method: 'DELETE' })).snapshots);
+  } catch (error) { toast(error.message); }
+}
+
+function goLive() {
+  liveMode = true;
+  $('banner').classList.add('hidden');
+  clearInterval(refreshTimer);
+  refreshTimer = setInterval(fetchData, 60000);
+  fetchData().then(loadWatchlist);
+}
+
+function exportJSON() {
+  if (!candles.length) { toast('There is nothing to export yet.'); return; }
+  const blob = new Blob([JSON.stringify({
+    symbol: $('sym').value.trim().toUpperCase(),
+    currency: $('currency').value,
+    hma_period: parseInt($('period').value, 10),
+    exported_at: new Date().toISOString(),
+    candles, hma, hma_offset: hmaOffset
+  }, null, 2)], { type: 'application/json' });
+
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `kryptos_${$('sym').value.toLowerCase()}_${Date.now()}.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+/* ----------------------------------------------------------------------
+   AI PANEL
+   ---------------------------------------------------------------------- */
+async function ask() {
+  const input = $('chat-in'), feed = $('chat');
+  const question = input.value.trim();
+  if (!question) return;
+  input.value = '';
+  feed.innerHTML += `<div class="text-right opacity-30 text-[9px] avant-garde">${escapeHTML(question)}</div>`;
+  feed.scrollTop = feed.scrollHeight;
+
+  try {
+    const data = await api('/api/ai', { method: 'POST', body: JSON.stringify({ msg: question }) });
+    feed.innerHTML += `<div class="border-l-2 border-[#ff2d55] pl-5 py-1">${escapeHTML(data.reply)}</div>`;
+    $('ai-label').textContent = data.available === false ? 'AI_OFFLINE' : 'Llama_3.1_Core';
+  } catch (error) {
+    feed.innerHTML += `<div class="border-l-2 border-white/10 pl-5 py-1 opacity-50">${escapeHTML(error.message)}</div>`;
+  }
+  feed.scrollTop = feed.scrollHeight;
+}
+
+/* ----------------------------------------------------------------------
+   WIRING AND STARTUP
+   ---------------------------------------------------------------------- */
+['sym', 'interval', 'currency', 'period'].forEach(id =>
+  $(id).addEventListener('change', () => { liveMode = true; $('banner').classList.add('hidden'); fetchData().then(loadWatchlist); })
+);
+$('hma-toggle').addEventListener('change', render);
+$('chat-in').addEventListener('keypress', e => { if (e.key === 'Enter') ask(); });
+window.addEventListener('resize', render);
+
+setInterval(() => { $('clock').textContent = new Date().toLocaleTimeString(); }, 1000);
+
+setMode('candle');
+loadWatchlist();
+loadSnapshots();
+goLive();
+</script>
+</body>
+</html>
