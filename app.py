@@ -140,8 +140,12 @@ def get_price():
         })
     except requests.Timeout:
         return json_error("Market data request timed out. Please try again.", 504)
-    except requests.RequestException:
-        return json_error("Could not reach the market data provider. Check your connection and retry.", 502)
+    except requests.RequestException as exc:
+        app.logger.error("Market data request failed: %s", exc)
+        status = getattr(exc.response, "status_code", None)
+        if status:
+            return json_error(f"Market data provider returned HTTP {status}. Try again later or check the provider status.", 502)
+        return json_error(f"Could not reach the market data provider ({type(exc).__name__}). Check your internet connection.", 502)
     except (ValueError, KeyError, TypeError):
         app.logger.exception("Invalid market data response")
         return json_error("The market data provider returned an unexpected response.", 502)
@@ -252,7 +256,7 @@ def ai_chat():
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
             json={
-                "model": "llama-3.1-8b-instant",
+                "model": os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b"),
                 "messages": [
                     {"role": "system", "content": (
                         "You are KRYPTOS, a concise cryptocurrency market-analysis assistant. "
@@ -267,7 +271,9 @@ def ai_chat():
         )
         if response.status_code in (401, 403):
             return jsonify({"reply": "AI configuration failed: the GROQ_API_KEY is invalid or lacks access.", "available": False})
-        response.raise_for_status()
+        if not response.ok:
+            app.logger.error("Groq returned %s: %s", response.status_code, response.text[:300])
+            return jsonify({"reply": f"AI service returned HTTP {response.status_code}. Check GROQ_MODEL and the Groq status page.", "available": False})
         result = response.json()
         reply = result.get("choices", [{}])[0].get("message", {}).get("content")
         if not reply:
@@ -275,8 +281,8 @@ def ai_chat():
         return jsonify({"reply": reply, "available": True})
     except requests.Timeout:
         return jsonify({"reply": "The AI service timed out. Please try again.", "available": False})
-    except (requests.RequestException, ValueError, KeyError, IndexError):
-        app.logger.exception("AI request failed")
+    except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
+        app.logger.exception("AI request failed: %s", exc)
         return jsonify({"reply": "The AI service is temporarily unavailable. Please try again later.", "available": False})
 
 
