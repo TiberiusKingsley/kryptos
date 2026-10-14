@@ -1,4 +1,4 @@
-import math
+xqimport math
 import os
 import sqlite3
 from pathlib import Path
@@ -83,6 +83,54 @@ def health():
     return jsonify({"ok": True})
 
 
+COINGECKO_API = "https://api.coingecko.com/api/v3"
+KNOWN_COINS = {
+    "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "XRP": "ripple", "ADA": "cardano",
+    "DOGE": "dogecoin", "LTC": "litecoin", "BNB": "binancecoin", "DOT": "polkadot",
+    "AVAX": "avalanche-2", "LINK": "chainlink", "TRX": "tron", "BCH": "bitcoin-cash", "XLM": "stellar",
+}
+_coin_ids = dict(KNOWN_COINS)
+
+
+def coin_id_for(symbol):
+    """Map a ticker such as BTC to a CoinGecko coin id, searching CoinGecko for unknown tickers."""
+    if symbol in _coin_ids:
+        return _coin_ids[symbol]
+    response = requests.get(f"{COINGECKO_API}/search", params={"query": symbol}, timeout=12)
+    response.raise_for_status()
+    matches = [c for c in response.json().get("coins", []) if c.get("symbol", "").upper() == symbol]
+    if not matches:
+        return None
+    matches.sort(key=lambda c: c.get("market_cap_rank") or 10 ** 9)
+    _coin_ids[symbol] = matches[0]["id"]
+    return matches[0]["id"]
+
+
+def fetch_ohlc(coin_id, currency, days):
+    """CoinGecko returns [timestamp_ms, open, high, low, close] rows, timestamp = candle close."""
+    response = requests.get(
+        f"{COINGECKO_API}/coins/{coin_id}/ohlc",
+        params={"vs_currency": currency.lower(), "days": days},
+        timeout=12,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def to_candles(rows, step):
+    """Convert CoinGecko rows to candles keyed by candle start time, merging 30-minute rows into hours."""
+    buckets = {}
+    for ts_ms, o, h, l, c in rows:
+        close_s = int(ts_ms) // 1000
+        start = ((close_s - 1) // step) * step if step == 3600 else close_s - step
+        if start in buckets:
+            b = buckets[start]
+            b["h"] = max(b["h"], float(h)); b["l"] = min(b["l"], float(l)); b["c"] = float(c)
+        else:
+            buckets[start] = {"t": start, "o": float(o), "h": float(h), "l": float(l), "c": float(c)}
+    return [buckets[k] for k in sorted(buckets)]
+
+
 @app.route("/api/price", methods=["GET", "POST"])
 def get_price():
     data = request.get_json(silent=True) or request.args
@@ -102,51 +150,49 @@ def get_price():
     if not 24 <= limit <= 336:
         return json_error("Chart range must be between 24 and 336 hours.")
 
-    # Fetch extra history so the HMA is already warmed up at the left edge of the chart.
-    extra = period + int(math.sqrt(period)) + 2
-    url = "https://min-api.cryptocompare.com/data/v2/histohour"
+    # Extra candles are fetched so the HMA is already warmed up at the left edge of the chart.
+    warmup = period + int(math.sqrt(period)) + 2
     try:
-        response = requests.get(
-            url,
-            params={"fsym": symbol, "tsym": currency, "limit": limit + extra},
-            timeout=12,
-        )
-        response.raise_for_status()
-        result = response.json()
-        if result.get("Response") == "Error":
-            return json_error(result.get("Message", "Market data provider rejected the request."), 400)
-        raw = result.get("Data", {}).get("Data", [])
-        if not raw:
-            return json_error("No market data was returned for this ticker.", 404)
-        candles = [
-            {"t": int(item["time"]), "o": float(item["open"]), "h": float(item["high"]),
-             "l": float(item["low"]), "c": float(item["close"])}
-            for item in raw
-            if all(item.get(key) is not None for key in ("time", "open", "high", "low", "close"))
-        ]
+        coin_id = coin_id_for(symbol)
+        if not coin_id:
+            return json_error(f"Unknown ticker '{symbol}'.", 404)
+        if limit <= 48:
+            # CoinGecko gives 30-minute candles for 2 days; merge them into 1-hour candles.
+            interval, step, keep = "1h", 3600, limit
+            rows = fetch_ohlc(coin_id, currency, 2)
+        else:
+            # 3+ days of history are only available as 4-hour candles.
+            interval, step, keep = "4h", 14400, limit // 4
+            days = min(30, -(-limit // 24) + -(-warmup * 4 // 24) + 1)
+            rows = fetch_ohlc(coin_id, currency, days)
+        candles = to_candles(rows, step)
         if not candles:
-            return json_error("The market data response did not contain valid candles.", 502)
+            return json_error("No market data was returned for this ticker.", 404)
+
         # HMA is computed on the full history, then trimmed to the requested chart range.
         hma_full, offset_full = calculate_hma([c["c"] for c in candles], period)
-        start = max(0, len(candles) - limit)
+        start = max(0, len(candles) - keep)
         skip = max(0, start - offset_full)
         hma = hma_full[skip:]
         offset = offset_full + skip - start
         candles = candles[start:]
         return jsonify({
-            "symbol": symbol, "currency": currency, "hma_period": period,
+            "symbol": symbol, "currency": currency, "hma_period": period, "interval": interval,
             "candles": candles, "hma": hma, "hma_offset": offset,
             "current": candles[-1]["c"],
         })
     except requests.Timeout:
         return json_error("Market data request timed out. Please try again.", 504)
+    except requests.HTTPError as exc:
+        status = getattr(exc.response, "status_code", None)
+        app.logger.error("CoinGecko returned HTTP %s", status)
+        if status == 429:
+            return json_error("CoinGecko rate limit reached. Wait a minute and try again.", 429)
+        return json_error(f"Market data provider returned HTTP {status}. Try again later.", 502)
     except requests.RequestException as exc:
         app.logger.error("Market data request failed: %s", exc)
-        status = getattr(exc.response, "status_code", None)
-        if status:
-            return json_error(f"Market data provider returned HTTP {status}. Try again later or check the provider status.", 502)
         return json_error(f"Could not reach the market data provider ({type(exc).__name__}). Check your internet connection.", 502)
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, IndexError):
         app.logger.exception("Invalid market data response")
         return json_error("The market data provider returned an unexpected response.", 502)
 
