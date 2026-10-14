@@ -102,11 +102,13 @@ def get_price():
     if not 24 <= limit <= 336:
         return json_error("Chart range must be between 24 and 336 hours.")
 
+    # Fetch extra history so the HMA is already warmed up at the left edge of the chart.
+    extra = period + int(math.sqrt(period)) + 2
     url = "https://min-api.cryptocompare.com/data/v2/histohour"
     try:
         response = requests.get(
             url,
-            params={"fsym": symbol, "tsym": currency, "limit": limit},
+            params={"fsym": symbol, "tsym": currency, "limit": limit + extra},
             timeout=12,
         )
         response.raise_for_status()
@@ -124,7 +126,13 @@ def get_price():
         ]
         if not candles:
             return json_error("The market data response did not contain valid candles.", 502)
-        hma, offset = calculate_hma([c["c"] for c in candles], period)
+        # HMA is computed on the full history, then trimmed to the requested chart range.
+        hma_full, offset_full = calculate_hma([c["c"] for c in candles], period)
+        start = max(0, len(candles) - limit)
+        skip = max(0, start - offset_full)
+        hma = hma_full[skip:]
+        offset = offset_full + skip - start
+        candles = candles[start:]
         return jsonify({
             "symbol": symbol, "currency": currency, "hma_period": period,
             "candles": candles, "hma": hma, "hma_offset": offset,
