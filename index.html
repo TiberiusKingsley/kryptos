@@ -249,7 +249,7 @@ async function fetchData() {
     hmaOffset = data.hma_offset;
     $('sym').value = data.symbol;
     $('price-hero').textContent = fmt(data.current, data.currency);
-    $('price-sub').textContent = data.currency + ' · HMA_' + data.hma_period;
+    $('price-sub').textContent = data.currency + ' · HMA_' + data.hma_period + ' · ' + data.interval + ' candles';
     setStatus('NODE_VERIFIED');
     render();
   } catch (error) {
